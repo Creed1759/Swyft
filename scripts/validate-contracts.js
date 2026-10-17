@@ -9,16 +9,26 @@ const {
   manifestKeysByContract,
 } = require('../packages/contract/scripts/check-address-drift.js');
 
-const contracts = [
-  'math-lib',
-  'pool',
-  'pool-factory',
-  'router',
-  'position-nft',
-  'fee-collector',
-  'oracle-adapter',
-  'cl-pool',
-];
+const root = path.dirname(__dirname); // Swyft root
+const contractsPath = path.join(root, 'packages', 'contract', 'contracts');
+const wasmDir = path.join(root, 'packages', 'contract', 'target', 'wasm32-unknown-unknown', 'release');
+const manifestPath = path.join(root, 'packages', 'contract', 'deployments', 'testnet.json');
+
+const discoveredContracts = fs.existsSync(contractsPath)
+  ? fs
+      .readdirSync(contractsPath)
+      .filter((entry) => {
+        const full = path.join(contractsPath, entry);
+        return (
+          fs.statSync(full).isDirectory() &&
+          fs.existsSync(path.join(full, 'Cargo.toml'))
+        );
+      })
+  : [];
+
+const contracts = Array.from(
+  new Set([...discoveredContracts, ...Object.keys(manifestKeysByContract)])
+).sort();
 
 const checkDrift = process.argv.includes('--check-drift');
 
@@ -36,11 +46,8 @@ function log(message, color = 'reset') {
 log('Validating Swyft contracts...\n', 'yellow');
 
 let passed = 0;
-let failed = 0;
-const root = path.dirname(__dirname); // Swyft root
-const contractsPath = path.join(root, 'packages', 'contract', 'contracts');
-const wasmDir = path.join(root, 'packages', 'contract', 'target', 'wasm32-unknown-unknown', 'release');
-const manifestPath = path.join(root, 'packages', 'contract', 'deployments', 'testnet.json');
+const failed = [];
+const missing = [];
 const freshHashes = {};
 
 for (const contract of contracts) {
@@ -49,8 +56,8 @@ for (const contract of contracts) {
   const contractPath = path.join(contractsPath, contract);
 
   if (!fs.existsSync(contractPath)) {
-    log('✗ (not found)', 'red');
-    failed++;
+    log(`✗ (missing directory: expected ${contractPath})`, 'red');
+    missing.push({ contract, expectedPath: contractPath });
     continue;
   }
 
@@ -75,20 +82,41 @@ for (const contract of contracts) {
     passed++;
   } catch (e) {
     log(`✗${e instanceof Error ? ` (${e.message})` : ''}`, 'red');
-    failed++;
+    failed.push({ contract, error: e instanceof Error ? e.message : String(e) });
   }
 }
 
 console.log('');
 log(`Passed: ${passed}/${contracts.length}`, 'green');
-if (failed > 0) {
-  log(`Failed: ${failed}/${contracts.length}`, 'red');
+if (missing.length > 0) {
+  log(`Missing: ${missing.length}/${contracts.length}`, 'red');
+}
+if (failed.length > 0) {
+  log(`Failed: ${failed.length}/${contracts.length}`, 'red');
+}
+
+if (missing.length > 0 || failed.length > 0) {
+  if (checkDrift) {
+    const unbuilt = [...missing.map((m) => m.contract), ...failed.map((f) => f.contract)];
+    log(`\nCannot check drift: unbuilt contracts detected (${unbuilt.join(', ')}).`, 'red');
+  }
   process.exit(1);
 }
 
 log('\nAll Swyft contracts validated!', 'green');
 
 if (checkDrift) {
+  const missingManifestContracts = contracts.filter(
+    (contract) => !manifestKeysByContract[contract]
+  );
+  if (missingManifestContracts.length > 0) {
+    log(
+      `\nContracts missing from manifestKeysByContract: ${missingManifestContracts.join(', ')}`,
+      'red'
+    );
+    process.exit(1);
+  }
+
   const manifest = fs.existsSync(manifestPath)
     ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
     : { contracts: {}, wasmHashes: {} };

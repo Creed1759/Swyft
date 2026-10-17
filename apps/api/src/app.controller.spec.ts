@@ -43,19 +43,27 @@ describe('AppController', () => {
     });
   });
 
-  describe('liveness (/health)', () => {
-    it('returns 200 without touching dependencies', async () => {
-      const queryRaw = jest.fn().mockRejectedValue(new Error('db down'));
-      const ping = jest.fn().mockRejectedValue(new Error('redis down'));
-      const controller = await buildController(queryRaw, ping);
-
+  describe('health (/health)', () => {
+    it('returns HTTP 200 and healthy payload when all checks pass', async () => {
       const res = mockResponse();
-      const result = await controller.health(res);
+      const result = await appController.health(res);
 
       expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
       expect(result.status).toBe('ok');
-      expect(queryRaw).not.toHaveBeenCalled();
-      expect(ping).not.toHaveBeenCalled();
+      expect(result.checks).toEqual({ postgres: true, redis: true });
+    });
+
+    it('returns HTTP 503 when a dependency is degraded', async () => {
+      const degradedController = await buildController(
+        jest.fn().mockRejectedValue(new Error('db down')),
+        jest.fn().mockResolvedValue(true),
+      );
+      const res = mockResponse();
+      const result = await degradedController.health(res);
+
+      expect(res.status).toHaveBeenCalledWith(HttpStatus.SERVICE_UNAVAILABLE);
+      expect(result.status).toBe('degraded');
+      expect(result.checks).toEqual({ postgres: false, redis: true });
     });
   });
 

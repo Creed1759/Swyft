@@ -302,3 +302,28 @@ describe('correlation ids and CLI', () => {
     spy.mockRestore();
   });
 });
+
+describe('sanitizeCorrelationId', () => {
+  it('passes through a valid 64-character string unchanged', () => {
+    const input64 = 'a'.repeat(64);
+    expect(sanitizeCorrelationId(input64)).toBe(input64);
+  });
+
+  it('truncates a 65-character valid string to 64 characters', () => {
+    const input65 = 'a'.repeat(65);
+    expect(sanitizeCorrelationId(input65)).toBe('a'.repeat(64));
+  });
+
+  it('returns null for an empty string', () => {
+    expect(sanitizeCorrelationId('')).toBeNull();
+  });
+
+  it('returns null for an input of only invalid characters', () => {
+    expect(sanitizeCorrelationId('@#$%^&*()+={}[]|\\:;"<>,?/~`')).toBeNull();
+  });
+
+  it('falls back to local-<pid> when no env var is set', () => {
+    expect(resolveCorrelationId({})).toMatch(/^local-\d+$/);
+  });
+});
+

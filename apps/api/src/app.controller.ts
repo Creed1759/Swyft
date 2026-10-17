@@ -1,10 +1,13 @@
 import {
   Controller,
   Get,
+  HttpStatus,
   Query,
+  Res,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { AppService } from './app.service';
+import type { Response } from 'express';
+import { AppService, HealthStatus } from './app.service';
 
 /**
  * Stable error codes for the Swyft router surface.
@@ -166,11 +169,27 @@ export class AppController {
   }
 
   /**
-   * Liveness probe. Dependency-free by design: it only asserts the
-   * process is running so a slow DB/Redis/RPC never triggers a restart
-   * loop. Readiness is reported separately at /health/ready.
+   * Health check endpoint. Serves the health payload computed by AppService.
+   * If any critical dependency is degraded, returns HTTP 503 (Service Unavailable)
+   * so load balancers and uptime checks recognize the degraded state.
    */
   @Get('health')
+  async health(
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<HealthStatus> {
+    const result = await this.appService.getHealth();
+    res.status(
+      result.status === 'degraded'
+        ? HttpStatus.SERVICE_UNAVAILABLE
+        : HttpStatus.OK,
+    );
+    return result;
+  }
+
+  getHealth(res: Response): Promise<HealthStatus> {
+    return this.health(res);
+  }
+
   getLiveness(): LivenessResponse {
     return { status: 'ok', service: 'swyft-api' };
   }
